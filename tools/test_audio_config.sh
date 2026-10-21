@@ -180,6 +180,31 @@ nochk "generic: no HDMI sections (this card has no HDMI PCM)" "$C" "<HDMI1>"
 chk "generic: jack names"      "$C" "<JackDev>HD-Audio Generic Headphone</JackDev>"
 chk "generic: mic jack"        "$C" "<JackDev>HD-Audio Generic Mic</JackDev>"
 
+# ---- 3b. Acer Aspire A515-46 (Ryzen 3 3350U, ALC255), from a user's logs: AMD HDMI card 0 + ALC255 card 1, both "HD-Audio Generic"; the
+# jack input device is named after its pin location ("Front Headphone") and there is no mic jack input device at all
+D=$(mk acer)
+cat > $D/cards <<'EOF'
+ 0 [Generic        ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0xc07c8000 irq 48
+ 1 [Generic_1      ]: HDA-Intel - HD-Audio Generic
+                      HD-Audio Generic at 0xc07c0000 irq 49
+EOF
+cat > $D/pcm <<'EOF'
+00-03: HDMI 0 : HDMI 0 : playback 1
+01-00: ALC255 Analog : ALC255 Analog : playback 1 : capture 1
+EOF
+cat > $D/input <<'EOF'
+N: Name="HD-Audio Generic HDMI/DP,pcm=3"
+N: Name="HD-Audio Generic Front Headphone"
+EOF
+gen acer gbos-gen Generic_1 "HD-Audio Generic" >/dev/null
+C=$W/out-acer/gbos-gen/audio_config.xml
+wellformed "$C"
+chk "acer: playback on card Generic_1" "$C" "<PlaybackPCM>hw:Generic_1,0</PlaybackPCM>"
+chk "acer: headphone jack = Front Headphone" "$C" "<JackDev>HD-Audio Generic Front Headphone</JackDev>"
+nochk "acer: no jack device that does not exist" "$C" "Headphone Mic</JackDev>"
+chk "acer: volumes set" "$W/out-acer/gbos-gen/mixer_paths.xml" 'name="Speaker Playback Volume" value="87 87"'
+
 # ---- 4. SOF, combo jack, one HDMI, only DMIC16kHz ---------------------------------------------------------------------------
 gen sofcombo gbos-gen sofrt5682 sof-rt5682 >/dev/null
 C=$W/out-sofcombo/gbos-gen/audio_config.xml
