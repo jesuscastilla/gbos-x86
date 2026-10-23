@@ -145,7 +145,13 @@ if ! ls /sys/block | grep -q '^mmcblk'; then
 fi
 # A disk is SATA when libata owns it: its sysfs path runs through an ataN port. A USB stick, a USB-SATA bridge, a card reader or a
 # virtual disk is also an sdX, but its path goes through usb / virtio / ..., so it is never a target.
-is_sata() { case "$(readlink -f /sys/block/$1 2>/dev/null)" in */ata[0-9]*/host*) return 0;; esac; return 1; }
+is_sata() {
+  case "$(readlink -f /sys/block/$1 2>/dev/null)" in
+    */usb*|*/virtio*) return 1;;
+    */ata[0-9]*/host*|*/ata*/host*|*/ahci*) return 0;;
+  esac
+  return 1
+}
 # Candidates: nvmeXnY, and mmcblkN whose device type is MMC (eMMC). SD cards and card readers are never targets; the eMMC's own
 # mmcblkNbootX / mmcblkNrpmb nodes are not matched. The stick's disk is never a candidate.
 fast_disks() {
@@ -161,11 +167,17 @@ sata_disks() {
     is_sata $n && echo $n
   done
 }
-# SATA disks are only offered when there is no NVMe/eMMC: a laptop with an NVMe and a SATA data disk keeps installing to the NVMe as
-# before. INSTALL_DISK=sda in gbos.cfg picks a SATA disk explicitly (also when there are several, or an NVMe is present).
+# SATA disks can be targets alongside NVMe/eMMC. In automated test (CONFIRM set), NVMe keeps priority if present.
+# On interactive boot, all internal disks are offered so the user can choose SATA even when NVMe is present.
+# INSTALL_DISK=sda in gbos.cfg picks a SATA disk explicitly.
 internal_disks() {
   _f=$(fast_disks)
-  if [ -n "$_f" ]; then echo "$_f"; else sata_disks; fi
+  _s=$(sata_disks)
+  if [ -n "$CONFIRM" ]; then
+    if [ -n "$_f" ]; then echo "$_f"; else echo "$_s"; fi
+  else
+    echo "$_f $_s"
+  fi
 }
 # eMMC and SATA take a moment to enumerate (driver load, link-up, IDENTIFY).
 for i in 1 2 3 4 5 6 7 8 9 10; do mdev -s; [ -n "$(internal_disks)" ] && break; sleep 1; done
@@ -173,6 +185,22 @@ set -- $(internal_disks)
 [ $# -ge 1 ] || [ -n "$INSTALL_DISK" ] || die "no internal NVMe, eMMC or SATA disk found (block devices: $(ls /sys/block | tr '\n' ' '))"
 if [ -n "$INSTALL_DISK" ]; then   # gbos.cfg INSTALL_DISK=mmcblk0 chooses when there is more than one
   case " $(fast_disks) $(sata_disks) " in *" $INSTALL_DISK "*) set -- $INSTALL_DISK;; *) die "INSTALL_DISK=$INSTALL_DISK is not one of the internal disks ($(fast_disks) $(sata_disks))";; esac
+elif [ $# -gt 1 ] && [ -z "$CONFIRM" ]; then
+  say "Multiple internal disks found:"
+  _idx=1
+  for _d in $*; do
+    _kind="Disk"
+    case $_d in nvme*) _kind="NVMe";; mmcblk*) _kind="eMMC";; sd*) _kind="SATA";; esac
+    _sz=$(( $(cat /sys/block/$_d/size 2>/dev/null || echo 0) * 512 / 1000000000 ))
+    say "  $_idx) /dev/$_d ($_kind, ${_sz} GB)"
+    _idx=$((_idx + 1))
+  done
+  ask "Select target disk [1-$#]: "
+  _pick=$(echo "$REPLY" | tr -d '[:space:]')
+  _sel=$(echo "$*" | awk -v p="$_pick" '{print $p}')
+  if [ -n "$_sel" ]; then
+    set -- $_sel
+  fi
 fi
 [ $# -eq 1 ] || die "more than one internal disk ($*); set INSTALL_DISK=<name> in gbos.cfg on the stick to pick one"
 T=$1; TD=/dev/$T
@@ -197,7 +225,9 @@ case $T in
         [ -n "$SERIAL" ] || SERIAL=$(printf '%s' "$_r" | awk '{print $NF}')
         MODEL="ATA $(printf '%s' "$_r" | sed 's/ *[^ ]*$//')";;
       *) [ -n "$SERIAL" ] || SERIAL=$WWID;;
-    esac;;
+    esac
+    [ -n "$SERIAL" ] || SERIAL=$(cat /sys/block/$T/serial 2>/dev/null | sed 's/^ *//; s/ *$//')
+    [ -n "$SERIAL" ] || SERIAL=$(cat $CTRL/serial 2>/dev/null | sed 's/^ *//; s/ *$//');;
   *)
     KIND=NVMe
     MODEL=$(cat $CTRL/model 2>/dev/null | sed 's/ *$//'); SERIAL=$(cat $CTRL/serial 2>/dev/null | sed 's/^ *//; s/ *$//');;

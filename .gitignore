@@ -50,6 +50,7 @@ __pycache__/
 #   kernel/isa_emu_patch/build_generic*.sh -> usb/modules/ (full depmod'ed module tree)
 # Files that were already tracked (iwlwifi-9000 ucode, ibt-17-16-1, regulatory.db) stay tracked.
 /usb/firmware/*/
+/usb/firmware/*.bin
 !/usb/firmware/intel/
 /usb/firmware/intel/*
 /usb/modules/

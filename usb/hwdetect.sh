@@ -17,10 +17,34 @@ GBOS_FWPATH=/sys/module/firmware_class/parameters/path
 
 gbos_modules_mount() {
   KVER=$(uname -r)
-  if [ -f $G/modules/lib/modules/$KVER/modules.dep ]; then
-    mount --bind $G/modules/lib/modules /lib/modules 2>/dev/null \
-      && log "hwdetect: module tree $KVER ($(find /lib/modules/$KVER -name '*.ko' | wc -l) modules) from gbos/modules" \
-      || log "hwdetect: bind mount of gbos/modules FAILED"
+  MDIR=$G/modules/lib/modules
+  MTREE=""
+  if [ -f "$MDIR/$KVER/modules.dep" ]; then
+    MTREE="$KVER"
+  elif [ -f "$MDIR/${KVER}+/modules.dep" ]; then
+    MTREE="${KVER}+"
+  elif [ -f "$MDIR/${KVER%+}/modules.dep" ]; then
+    MTREE="${KVER%+}"
+  else
+    for d in "$MDIR"/*; do
+      if [ -f "$d/modules.dep" ]; then
+        MTREE="$(basename "$d")"
+        break
+      fi
+    done
+  fi
+
+  if [ -n "$MTREE" ]; then
+    mkdir -p "/lib/modules/$KVER"
+    if [ "$MTREE" = "$KVER" ]; then
+      mount --bind "$MDIR" /lib/modules 2>/dev/null \
+        && log "hwdetect: module tree $KVER ($(find "/lib/modules/$KVER" -name '*.ko' | wc -l) modules) from gbos/modules" \
+        || log "hwdetect: bind mount of gbos/modules FAILED"
+    else
+      mount --bind "$MDIR/$MTREE" "/lib/modules/$KVER" 2>/dev/null \
+        && log "hwdetect: module tree $MTREE ($(find "/lib/modules/$KVER" -name '*.ko' | wc -l) modules) mapped to /lib/modules/$KVER" \
+        || log "hwdetect: bind mount of gbos/modules FAILED"
+    fi
     return 0
   fi
   log "hwdetect: gbos/modules/lib/modules/$KVER missing, only the initramfs modules are available"
@@ -161,7 +185,23 @@ gbos_xe_params() {
 gbos_hwdetect() {
   [ -f $G/gbos.cfg ] && [ "$HWDETECT" = 0 ] && { log "hwdetect: disabled (HWDETECT=0)"; return 0; }
   [ -d $G/firmware ] && echo -n $G/firmware > $GBOS_FWPATH
-  gbos_modules_mount && gbos_modopts && { gbos_xe_params; gbos_coldplug && gbos_wait_devices ${1:-15}; }
+  gbos_modules_mount && gbos_modopts && {
+    gbos_xe_params
+    gbos_coldplug
+    for d in /sys/bus/pci/devices/*; do
+      if [ -e "$d/class" ]; then
+        case "$(cat $d/class 2>/dev/null)" in 0x03*)
+          if [ "$(cat $d/vendor 2>/dev/null)" = 0x8086 ]; then
+            if ! grep -qE '^(i915|xe) ' /proc/modules; then
+              modprobe i915 2>/dev/null && log "hwdetect: i915 loaded directly"
+            fi
+            break
+          fi;;
+        esac
+      fi
+    done
+    gbos_wait_devices ${1:-15}
+  }
   # The brightness keys/backlight need acpi_video when the panel has no native backlight.
   [ -d /sys/class/backlight ] && [ -z "$(ls /sys/class/backlight 2>/dev/null)" ] && modprobe -q video 2>/dev/null
   gbos_hw_report
