@@ -240,6 +240,11 @@ if mount --bind /gbos /new/postinstall; then
     mkdir /data/system/devices 0775 system system
     mkdir /data/system/devices/idc 0775 system system$IDCRC"
   fi
+  if [ "${SKIP_SETUP:-1}" != 0 ] && [ -f $G/suw_fix.sh ]; then
+    SUW_FIX_START="    start gbos_suw_fix"
+  else
+    SUW_FIX_START=
+  fi
   cat > /tmp/sysinit/gbos.rc <<RC
 # Rotate at 1 MB: on this stick, data written past ~4 MB of a file that stays open never reaches
 # the FAT cluster chain before power-off (fsck: "size ... should at most be 4046848"). Rotating
@@ -296,6 +301,7 @@ on property:sys.boot_completed=1
     start gbos_displaydiag
     start gbos_aidiag
     start gbos_ksu
+$SUW_FIX_START
 
 # AI diagnostics (Magic Pointer / AICore): usb/aidiag.sh writes logs/boot-N/ai-1.txt (90 s) and ai-2.txt (4 min).
 # The gbos_aidns_* services run one ping per app uid so aidiag can compare DNS as AICore (10107) with
@@ -348,6 +354,14 @@ service gbos_ksu /system/bin/sh /postinstall/gbos/ksu/install.sh $N ${KSU_MANAGE
 
 # Logical display size (RESOLUTION in gbos.cfg); "reset" = native 1920x1080.
 service gbos_wmsize /system/bin/wm size $WMSIZE
+    user root
+    group root
+    seclabel u:r:shell:s0
+    oneshot
+    disabled
+
+# Bypass stuck SetupWizard and disable failing/incompatible Google OTA updates
+service gbos_suw_fix /system/bin/sh /postinstall/gbos/suw_fix.sh
     user root
     group root
     seclabel u:r:shell:s0
@@ -475,11 +489,16 @@ DROP='^ro.boot.hypervisor.protected_vm.supported=|^ro.surface_flinger.has_wide_c
     # "Primary plane for CRTC not found", "No pipelines available. Creating null-display for headless mode": SurfaceFlinger draws into
     # nothing, black screen). amdgpu's planes (kernel 6.18) have none. Seen on a Ryzen 3 3350U, logcat boot-6.
     echo "vendor.hwc.drm.enable_color_pipeline=false"
-    # Apps (HWUI) otherwise draw with Vulkan directly and abort at start-up on a driver with one queue per family:
-    # "Assertion failed: queueProps[i].queueFamilyProperties.queueCount < kRequestedQueueCount" (SIGABRT in RenderThread of setupwizard,
-    # systemui, launcher, 300+ times; SwiftShader reports queueCount=1, RADV too). OpenGL ES through ANGLE (-> the same Vulkan driver) is
-    # what SurfaceFlinger already uses successfully here. Seen on the Ryzen 3 3350U, second logs.
-    echo "ro.hwui.use_vulkan=false"
+    # Apps (HWUI) rendering backend:
+    # If using RADV on AMD, our patched HAL exposes queueCount=2 so HWUI uses native Vulkan
+    # hardware acceleration (ro.hwui.use_vulkan=true).
+    # If using SwiftShader (CPU software rendering), keep Vulkan disabled for HWUI because
+    # SwiftShader has queueCount=1 and CPU blur is slow.
+    if [ "$(gbos_gpu_vulkan)" != radv ]; then
+      echo "ro.hwui.use_vulkan=false"
+    else
+      echo "ro.hwui.use_vulkan=true"
+    fi
   fi
   if [ -n "$DENSITY" ]; then echo "ro.sf.lcd_density=$DENSITY"; fi
   if [ -n "$DEVICE_MODEL" ]; then

@@ -47,14 +47,15 @@ docker run --rm --platform linux/amd64 -e KEEP_BUILD="${KEEP_BUILD:-0}" -v gbos-
   # 26.2.5 lacks radv/android deferred swapchain binding (f7a95102, main only): it crashes in radv_BindImageMemory2
   MESA_TAG=b888682cba909c477f405e377cee881ca68e289d
   DRM_TAG=libdrm-2.4.133
+  MESA_URL=https://gitlab.freedesktop.org/mesa/mesa.git
   if [ -d mesa/.git ]; then
-    git -C mesa fetch -q --depth 1 origin $MESA_TAG
+    git -C mesa fetch -q --depth 1 "$MESA_URL" $MESA_TAG
     git -C mesa checkout -q -f $MESA_TAG
     git -C mesa clean -fdx
   else
     rm -rf mesa
     git init -q mesa
-    git -C mesa fetch -q --depth 1 https://gitlab.freedesktop.org/mesa/mesa.git $MESA_TAG
+    git -C mesa fetch -q --depth 1 "$MESA_URL" $MESA_TAG
     git -C mesa checkout -q -f FETCH_HEAD
   fi
   if [ -d drm/.git ]; then
